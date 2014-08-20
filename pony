@@ -69,8 +69,10 @@ class Pony():
         cmdList = [JIRA_CMD] + cmdOpts
         if self.verbose:
             cmdList.append("--debug")
-            print "Running command with debug options:"
+            print "+++++++++++++++"
+            print "Command run:"
             print " ".join(cmdList)
+            print "+++++++++++++++"
         try:
             res = subprocess.Popen(cmdList,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
             ret = res.stdout.readlines()
@@ -130,8 +132,6 @@ class Pony():
 
         if self.verbose:
             print "+++++++++++++++"
-            print "cmd:"
-            print " ".join(cmdList)
             print "Raw dump of ticket close:"
             print res
             print "+++++++++++++++"
@@ -155,10 +155,21 @@ class Pony():
                     "--timeSpent", self.duration, 
                     "--issue", id]
         res = self._runJIRACmd(cmdList)
-        if "added for issue" in res[0]:
-            return True
+
+        if self.verbose:
+            print "*************"
+            print "For work duration, JIRA returned:"
+            print "--------------------------------"
+            print res
+            print "*************"
+
+            if "added for issue" in res[-2]:
+                return True
         else:
-            return False
+            if "added for issue" in res[-1]:
+                return True
+
+        return False
 
     def LogTicketAndClose(self):
         """
