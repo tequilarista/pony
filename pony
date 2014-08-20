@@ -71,15 +71,15 @@ class Pony():
             cmdList.append("--debug")
             print "Running command with debug options:"
             print " ".join(cmdList)
-            try:
-                res = subprocess.Popen(cmdList,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
-                ret = res.stdout.readlines()
-                if ret:
-                    return ret
-                else:
-                    return None
-            except Exception, e:
-                sys.exit("Process terminated unexpectedly:\n\t%s" % e)
+        try:
+            res = subprocess.Popen(cmdList,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+            ret = res.stdout.readlines()
+            if ret:
+                return ret
+            else:
+                return None
+        except Exception, e:
+            sys.exit("Process terminated unexpectedly:\n\t%s" % e)
 
     def createTicket(self, jiraSummary):
         """
@@ -97,19 +97,22 @@ class Pony():
         if not res: # something bad happened
             return None
 
+        # isolate the jira issue id
+        # XXX - jira cli returns different lists depending on whether
+        # or not things are invoked with the --debug flag. ack. 
+        id = ""
         if self.verbose:
             print "+++++++++++++++"
             print "Raw dump of ticket create:"
             print res
             print "+++++++++++++++"
 
-        iter = len(res) - 2 # the second to last element in list
-                            # you get back from the JIRA is the 
-                            # info we want
+            id = re.sub(r'created .*', "", res[-2])
+            id = re.sub(r'Issue ', "", id)
+        else:
+            id = re.sub(r'created .*', "", res[-1])
+            id = re.sub(r'Issue ', "", id)
 
-        # isolate the jira issue id
-        id = re.sub(r'created .*', "", res[iter])
-        id = re.sub(r'Issue ', "", id)
         return id
 
     def closeTicket(self, id):
@@ -127,12 +130,15 @@ class Pony():
 
         if self.verbose:
             print "+++++++++++++++"
+            print "cmd:"
+            print " ".join(cmdList)
             print "Raw dump of ticket close:"
             print res
             print "+++++++++++++++"
 
-        # this is horrible, but a quick hack to address weird return values from jira CLI
-        if "Successfully progressed" in res[0] or "Successfully progressed" in res[-2]:
+        # this is horrible, but a quick hack to address weird results 
+        # behavior from jira CLI
+        if "Successfully progressed" in res[-1] or "Successfully progressed" in res[-2]:
             return True
         else:
             return False
@@ -161,7 +167,7 @@ class Pony():
         """
         # first create the ticket
         jiraSummary = "%s requested help with: %s" % (self.user, self.comment)
-        id = self.createTicket(jiraSummary)
+        id = self.createTicket(jiraSummary).strip()
 
         # if duration was specified, log that now
         if self.duration:
@@ -172,7 +178,7 @@ class Pony():
         # now close it out
         res = self.closeTicket(id)
         if res:
-            print "HelpTicket %s succesfully logged!" % id.strip()
+            print "HelpTicket %s succesfully logged!" % id
         else:
             print "ERROR: failed to close issue: %s" % (id)
 

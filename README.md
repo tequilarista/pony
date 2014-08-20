@@ -17,9 +17,12 @@ and add the following line:
 
     JIRA_CMD = "/path/to/jira.sh"
 
-You can also set JIRA_CMD as an environment variable.
+You can also set JIRA_CMD as an environment variable.  The jira.sh should be updated to use
+shared JIRA credentials that all pony tickets are logged as.  A future feature would be to pass 
+login information as a parameter
 
 Has been tested on OSX and Linux.  Has been tested with jira-cli-3.6.0. 
+
 
 Known Issues
 ============
