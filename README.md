@@ -19,17 +19,17 @@ and add the following line:
 
 You can also set JIRA_CMD as an environment variable.  The jira.sh should be updated to use
 shared JIRA credentials that all pony tickets are logged as.  A future feature would be to pass 
-login information as a parameter
+login information as a parameter.
 
-Has been tested on OSX and Linux.  Has been tested with jira-cli-3.6.0. 
 
+Tested on OSX (Mavericks) and Linux (Centos).  
+Known to work on JIRA 6.2.5
+Known to work with jira-cli-3.6.0. Will be evaluating upgrades in the not-too-distant future.
 
 Known Issues
 ============
-* There's a problem parsing the cli output with Jira 6.2.5.  The ticket is created but 
-pony thinks there was an error. 
-
-* Not super well-tested at the moment
+* Susceptible to changes in JIRA versions -- the order of return values seem to move around.
+* Not super well-tested at the moment.  Let me know what you find.
 
 Authors
 -------
