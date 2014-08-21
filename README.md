@@ -3,7 +3,21 @@ Overview
 
 "You can't have a pony (except you can)"
 
-A tool for fast logging of JIRA tasks to track support interrupts
+A tool for fast logging of JIRA tasks to track support interrupts.  Opens and closes tickets in a 
+single action, adds a "HelpTicket" label for ease of querying.
+
+Usage: pony [options]
+
+Options:
+  -h, --help     show this help message and exit
+  -u <user>      name of user needing assistance.
+  -c <comment>   brief description of the task, will be used as the bug
+                 summary
+  -d <duration>  amount of time spent, i.e.: 2h, 3d, 1w (optional)
+  -v             tell jira CLI to run verbosely
+
+% pony -u joe.developer -c "debugged weird config problem breaking local build" -d 4h
+HelpTicket ABC-1234 succesfully logged!
 
 Requirements
 =============
