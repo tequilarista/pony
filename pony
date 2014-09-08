@@ -2,18 +2,10 @@
 """
 pony: tool for fast logging of JIRA tasks
 __author__ = 'Tara Hernandez'
-__version__ = '2.0'
+__version__ = '3.0'
 
-requirements: needs to have access to the JIRA cli tool.  Easiest way is to create
-a conf file:
-
-    ~/.pony.conf
-
-and add the following line:
-
-    JIRA_CMD = "/path/to/jira.sh"
-
-You can also set JIRA_CMD as an environment variable.
+requirements: 
+    jira module
 
 """
 
@@ -23,78 +15,81 @@ import re
 import subprocess
 import sys
 
+from jira.client import JIRA # pip install jira
+
 # "Where's jira?" -- check for a conf file that will
 # specify the jira path
-JIRA_CMD = ""
-PONY_CONF_FILE = os.path.join(os.environ['HOME'],'.pony.conf')
-if os.path.exists(PONY_CONF_FILE):
-    execfile(PONY_CONF_FILE)
+#JIRA_CMD = ""
+#PONY_CONF_FILE = os.path.join(os.environ['HOME'],'.pony.conf')
+#if os.path.exists(PONY_CONF_FILE):
+#    execfile(PONY_CONF_FILE)
 
 # didn't find one, what else we got?
-if not JIRA_CMD:
-    if os.environ.has_key("JIRA_CMD"):
-        JIRA_CMD = os.environ["JIRA_CMD"]
-    elif os.path.exists(os.path.join(os.path.dirname(sys.argv[0]),"jira-cli-3.6.0/jira.sh")):
-        JIRA_CMD = os.path.join(os.path.dirname(sys.argv[0]),"jira-cli-3.6.0/jira.sh")
-    else:
-        sys.exit("Sorry, can't find a jira CLI to run")
+#if not JIRA_CMD:
+#    if os.environ.has_key("JIRA_CMD"):
+#        JIRA_CMD = os.environ["JIRA_CMD"]
+#    elif os.path.exists(os.path.join(os.path.dirname(sys.argv[0]),"jira-cli-3.6.0/jira.sh")):
+#        JIRA_CMD = os.path.join(os.path.dirname(sys.argv[0]),"jira-cli-3.6.0/jira.sh")
+#    else:
+#        sys.exit("Sorry, can't find a jira CLI to run")
 
 
 class Pony():
     """ Pony class -- provides helper and task functions to talk to JIRA"""
-    def __init__(self, user, comment, duration=None, verbose=False):
-        """ class keywords:
+    def __init__(self, project, user, comment, duration=None, verbose=False):
+        """ class attrs:
         user -- person we are recording having helped
         comment -- brief description of task
         duration -- optional notation of time spent
-        verbose -- tell JIRA cli to dump debug data
+        verbose -- XXX debug info?
         """
-        self.verbose = verbose
+        self.jiraConn = None
+        self.serverURL = "http://jira.dev.lithium.com"
+        self.jiraUsername = "cde.bot"
+        self.jiraPassword = "cde.bot!"
+
+        # ticken info
+        self.verbose = False
+        self.jiraProj = project
         self.user = user
         self.comment = comment
         self.duration = duration
-    
+
         try:
             self.assignee = os.environ['USER']
         except Exception, e:
             sys.exit("Unable to determine $USER value")
 
-    def _runJIRACmd(self, cmdOpts):
-        """
-        execute jira cli command.
-
-        input -- list of arguments to pass to jira
-        @output -- raw list returned by subprocess call
-        """
-        cmdList = [JIRA_CMD] + cmdOpts
-        if self.verbose:
-            cmdList.append("--debug")
-            print "+++++++++++++++"
-            print "Command run:"
-            print " ".join(cmdList)
-            print "+++++++++++++++"
+    def _createConnection(self):
+        jira_server = {'server': self.serverURL}
+        jira_auth = (self.jiraUsername,self.jiraPassword)
         try:
-            res = subprocess.Popen(cmdList,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
-            ret = res.stdout.readlines()
-            if ret:
-                return ret
-            else:
-                return None
+            self.jiraConn = JIRA(options=jira_server,basic_auth=jira_auth)
         except Exception, e:
-            sys.exit("Process terminated unexpectedly:\n\t%s" % e)
+            print "Unable to create connection to JIRA: %s", e
+            raise
+
 
     def createTicket(self, jiraSummary):
+        self._createConnection()
+        new_id = self.jiraConn.create_issue(project={'key': self.jiraProj}, summary=self.comment,
+                              issuetype={'name': 'task'})
+        self.jiraConn.assign_issue({'issue':new_id,'assignee':self.assignee})
+        return new_id
+
+
+    def createTicket_OLD(self, jiraSummary):
         """
         Create a JIRA issue of type task
         @input -- summary to use for jira issue
         @output -- JIRA issue id
         """
-        cmdList = ["--action", "createIssue", 
-                "--project", "CDE", 
-                "--type", "task",
-                "--labels", "HelpTicket",
-                "--assignee", self.assignee,
-                "--summary", jiraSummary] 
+        cmdList = [ "--action", "createIssue", 
+                    "--project", "CDE", 
+                    "--type", "task",
+                    "--labels", "HelpTicket",
+                    "--assignee", self.assignee,
+                    "--summary", jiraSummary ] 
         res = self._runJIRACmd(cmdList)
         if not res: # something bad happened
             return None
@@ -117,17 +112,18 @@ class Pony():
 
         return id
 
-    def closeTicket(self, id):
+    def closeTicket(self,id)
+        self.jiraConn.transition_issue(fields={ 'issue' => id,
+                                                'status' => 'Closed',
+                                                'resolution':'Done'})
+
+    def closeTicket_Old(self, id):
         """
         For a specified JIRA issue, progress it to "Closed"
 
         @input -- JIRA id
         @output -- return True for success, False otherwise
         """
-        cmdList = ["--action", "progressIssue", 
-                    "--resolution", "Done", 
-                    "--issue", id,
-                    "--step", "Close Issue"] 
         res = self._runJIRACmd(cmdList)
 
         if self.verbose:
@@ -151,25 +147,10 @@ class Pony():
         @input -- JIRA issue id
         @output -- True for success, False otherwise
         """
-        cmdList = ["--action", "addWork", 
-                    "--timeSpent", self.duration, 
-                    "--issue", id]
-        res = self._runJIRACmd(cmdList)
 
-        if self.verbose:
-            print "*************"
-            print "For work duration, JIRA returned:"
-            print "--------------------------------"
-            print res
-            print "*************"
+        self.jiraConn.add_worklog(issue=id,timeSpent=self.duration})
 
-            if "added for issue" in res[-2]:
-                return True
-        else:
-            if "added for issue" in res[-1]:
-                return True
-
-        return False
+        return True # XXX ?
 
     def LogTicketAndClose(self):
         """
