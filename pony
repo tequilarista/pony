@@ -60,24 +60,41 @@ def loadTemplate():
 
 class Pony():
     """ Pony class -- provides helper and task functions to talk to a bug server (jira, right now"""
-    def __init__(self, user, comment, userAuth, userPassword, server, project, duration=None):
-        """ class attrs:
-        user -- person we are recording having helped
-        comment -- brief description of task
-        duration -- optional notation of time spent
-        verbose -- XXX debug info?
+    def __init__(self, customer, comment, userAuth, userPassword, server, project, duration=None):
+        """ 
+        :param customer -- person we are recording having helped
+        :param comment -- brief description of task
+        :param userAuth -- authenticating user for jira connection
+        :param userPassword -- password for above
+        :param server -- jira server URL 
+        :param project -- name of jira project
+        :param duration -- optional notation of time spent, jira notation
         """
         self.serverConn = None
-        self.serverURL = None
-        self.serverAuth = None
-        self.serverPassword = None
+        self.serverURL = server
+        self.serverAuth = userAuth
+        self.serverPassword = userPassword
 
         # ticken info
         self.verbose = False
         self.jiraProj = project
-        self.user = user
+        self.customer = customer
         self.comment = comment
         self.duration = duration
+
+        if os.environ['USER']:
+            self.assignee = os.environ['USER']
+        else:
+            self.assignee = self.serverAuth
+
+    def printError(self, msg, exception=None):
+            print "_ERROR_\n%s" % msg
+            if exception:
+                print "Exception:\n---------\n %s\n---------" % exception
+
+    def generateTicketURL(self,id):
+        urlPath = "%s/browse/%s" % (self.serverURL, id)
+        return urlPath
 
     def _createConnection(self):
         jira_server = {'server': self.serverURL}
@@ -85,56 +102,79 @@ class Pony():
         try:
             self.serverConn = JIRA(options=jira_server,basic_auth=jira_auth)
         except Exception, e:
-            print "Unable to create connection to JIRA: %s", e
-            raise
+            self.printError("Unable to create connection to JIRA", e)
+            return False
 
+        return True
+            
 
     def createTicket(self, jiraSummary):
         self._createConnection()
-        new_id = self.serverConn.create_issue(project={'key': self.jiraProj}, summary=self.comment,
-                              issuetype={'name': 'task'})
-        self.serverConn.assign_issue({'issue':new_id,'assignee':self.serverAuth})
-        return new_id
+
+        fields = {"project": {"key": self.jiraProj },
+                  "summary": jiraSummary,
+                  "issuetype": {"name": "Bug"}
+                 }
+        try:
+            new_id = self.serverConn.create_issue(fields)
+            self.serverConn.assign_issue(new_id, self.assignee)
+            return new_id
+        except Exception, e:
+            self.printError("Unable to create ticket", e)
+
+        return True
+            
 
     def closeTicket(self,id):
-        self.serverConn.transition_issue(fields={'issue' : id,
-                                                'status' : 'Closed',
-                                                'resolution':'Done'})
+        # obscure, but the API wants you to know the "transitionID" for closing a bug.  According to my
+        # spelunking, it's 2.  Clear as mud.
+        try:
+            self.serverConn.transition_issue(id, transitionId=2)
+        except Exception, e:
+            self.printError("Unable to close ticket id=%s" % id, e)
+            return False
+
+        return True
+
 
     def addWorkDuration(self, id):
         """
         For a specified JIRA issue, log work as specified
         by the 'duration' user argument
 
-        @input -- JIRA issue id
-        @output -- True for success, False otherwise
+        :param -- JIRA issue id
         """
+        try:
+            self.serverConn.add_worklog(issue=id,timeSpent=self.duration)
+        except Exception, e:
+            self.printError("Unable to update ticket id=%s with duration information" % id, e)
+            return False
+            
+        return True
 
-        self.serverConn.add_worklog(issue=id,timeSpent=self.duration)
-
-        return True # XXX ?
 
     def LogTicketAndClose(self):
         """
-        Given a user name and a comment, create then immediately
+        Given a customer name and a comment, creates then immediately
         closes a help ticket in JIRA
         """
         # first create the ticket
-        jiraSummary = "%s requested help with: %s" % (self.user, self.comment)
-        id = self.createTicket(jiraSummary).strip()
+        jiraSummary = "%s requested help with: %s" % (self.customer, self.comment)
+        id = self.createTicket(jiraSummary)
+        if not id:
+            return False
+
 
         # if duration was specified, log that now
         if self.duration:
-            log = self.addWorkDuration(id)
-            if not log:
-                print "ERROR: failed to log work timeSpent '%s' to %s" % (self.duration, id)
+            if not self.addWorkDuration(id):
+                return False
 
         # now close it out
-        res = self.closeTicket(id)
-        if res:
-            print "HelpTicket %s succesfully logged!" % id
-        else:
-            print "ERROR: failed to close issue: %s" % (id)
+        if not self.closeTicket(id):
+                return False
+
+        return id
 
 
 ##############################
@@ -143,8 +183,8 @@ def main():
     parser = optparse.OptionParser()
 
     parser.add_option("-u",
-                      metavar="<user>",
-                      dest="user",
+                      metavar="<customer>",
+                      dest="customer",
                       help="name of user needing assistance -- REQUIRED.")
     parser.add_option("-c",
                       metavar="<comment>",
@@ -191,7 +231,7 @@ def main():
             sys.exit("Can't create template. Exiting...")
         sys.exit("Template file created at %s" % PONY_CONF_FILE)
 
-    if not (options.user or options.comment):
+    if not (options.customer or options.comment):
         parser.error("ERROR: Missing required options.  Please run "
              "'pony -h' for usage")
 
@@ -210,13 +250,18 @@ def main():
         parser.error("ERROR: Missing required options.  Please run "
              "'pony -h' for usage")
 
-    print options.user, options.comment, userAuthArg, passAuthArg, serverArg, projectArg, options.duration
-
-    sys.exit()
 
     # instantiate class
-    p = Pony(options.user, options.comment, userAuthArg, passAuthArg, serverArg, projectArg, options.duration)
-    p.LogTicketAndClose()
+    p = Pony(options.customer, options.comment, userAuthArg, passAuthArg, serverArg, projectArg, options.duration)
+
+    # stable it
+    ticketID = p.LogTicketAndClose()
+    if ticketID:
+        ticketURL = p.generateTicketURL(ticketID)
+        print "Successfully stabled that pony!: %s" % ticketURL
+        sys.exit(0)
+    else:
+        sys.exit("Successfully stabled that pony!: %s" % ticketURL)
 
 if __name__ == "__main__":
     main()
