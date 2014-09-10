@@ -2,196 +2,180 @@
 """
 pony: tool for fast logging of JIRA tasks
 __author__ = 'Tara Hernandez'
-__version__ = '2.0'
+__version__ = '3.0'
 
-requirements: needs to have access to the JIRA cli tool.  Easiest way is to create
-a conf file:
-
-    ~/.pony.conf
-
-and add the following line:
-
-    JIRA_CMD = "/path/to/jira.sh"
-
-You can also set JIRA_CMD as an environment variable.
+requirements: 
+    jira module
 
 """
 
+import json
 import optparse
 import os
 import re
 import subprocess
 import sys
 
-# "Where's jira?" -- check for a conf file that will
-# specify the jira path
-JIRA_CMD = ""
-PONY_CONF_FILE = os.path.join(os.environ['HOME'],'.pony.conf')
+from jira.client import JIRA # pip install jira
+
+PONY_CONF_FILE = os.path.join(os.environ['HOME'],'.newpony.conf')
 if os.path.exists(PONY_CONF_FILE):
     execfile(PONY_CONF_FILE)
 
-# didn't find one, what else we got?
-if not JIRA_CMD:
-    if os.environ.has_key("JIRA_CMD"):
-        JIRA_CMD = os.environ["JIRA_CMD"]
-    elif os.path.exists(os.path.join(os.path.dirname(sys.argv[0]),"jira-cli-3.6.0/jira.sh")):
-        JIRA_CMD = os.path.join(os.path.dirname(sys.argv[0]),"jira-cli-3.6.0/jira.sh")
-    else:
-        sys.exit("Sorry, can't find a jira CLI to run")
+def createTemplate():
+    ponyTemplate = { 'login_info': {
+                                    'serverURL': "<HTTP Url for bug system>",
+                                    'project' : "<project code>",
+                                    'userAuth': "<your username>",
+                                    'passAuth': "<your password>",
+                                    }
+                    }
 
+    if os.path.exists(PONY_CONF_FILE):
+        answer = None
+        while not answer:
+            answer = raw_input("~/.pony.conf already exists, overwrite? [y/n]")
+            if answer.lower() == "n":
+                return False
+
+    fh = open(PONY_CONF_FILE, "w+")
+    dump = json.dumps(ponyTemplate, indent=4, sort_keys=False)
+    fh.write(dump)
+    fh.close()
+    return True
+
+def loadTemplate():
+    try:
+        fh = open(PONY_CONF_FILE, 'r')
+        res = json.loads(fh.read())
+        fh.close()
+    except IOError, e:
+       print "Unable to load %s" % PONY_CONF_FILE
+
+    user = res['login_info']['userAuth']
+    passwd = res['login_info']['passAuth']
+    srvr = res['login_info']['serverURL']
+    proj = res['login_info']['project']
+    return (user,passwd,srvr,proj)
 
 class Pony():
-    """ Pony class -- provides helper and task functions to talk to JIRA"""
-    def __init__(self, user, comment, duration=None, verbose=False):
-        """ class keywords:
-        user -- person we are recording having helped
-        comment -- brief description of task
-        duration -- optional notation of time spent
-        verbose -- tell JIRA cli to dump debug data
+    """ Pony class -- provides helper and task functions to talk to a bug server (jira, right now"""
+    def __init__(self, customer, comment, userAuth, userPassword, server, project, duration=None):
+        """ 
+        :param customer -- person we are recording having helped
+        :param comment -- brief description of task
+        :param userAuth -- authenticating user for jira connection
+        :param userPassword -- password for above
+        :param server -- jira server URL 
+        :param project -- name of jira project
+        :param duration -- optional notation of time spent, jira notation
         """
-        self.verbose = verbose
-        self.user = user
+        self.serverConn = None
+        self.serverURL = server
+        self.serverAuth = userAuth
+        self.serverPassword = userPassword
+
+        # ticken info
+        self.verbose = False
+        self.jiraProj = project
+        self.customer = customer
         self.comment = comment
         self.duration = duration
-    
-        try:
+
+        if os.environ['USER']:
             self.assignee = os.environ['USER']
-        except Exception, e:
-            sys.exit("Unable to determine $USER value")
+        else:
+            self.assignee = self.serverAuth
 
-    def _runJIRACmd(self, cmdOpts):
-        """
-        execute jira cli command.
+    def printError(self, msg, exception=None):
+            print "_ERROR_\n%s" % msg
+            if exception:
+                print "Exception:\n---------\n %s\n---------" % exception
 
-        input -- list of arguments to pass to jira
-        @output -- raw list returned by subprocess call
-        """
-        cmdList = [JIRA_CMD] + cmdOpts
-        if self.verbose:
-            cmdList.append("--debug")
-            print "+++++++++++++++"
-            print "Command run:"
-            print " ".join(cmdList)
-            print "+++++++++++++++"
+    def generateTicketURL(self,id):
+        urlPath = "%s/browse/%s" % (self.serverURL, id)
+        return urlPath
+
+    def _createConnection(self):
+        jira_server = {'server': self.serverURL}
+        jira_auth = (self.serverAuth,self.serverPassword)
         try:
-            res = subprocess.Popen(cmdList,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
-            ret = res.stdout.readlines()
-            if ret:
-                return ret
-            else:
-                return None
+            self.serverConn = JIRA(options=jira_server,basic_auth=jira_auth)
         except Exception, e:
-            sys.exit("Process terminated unexpectedly:\n\t%s" % e)
+            self.printError("Unable to create connection to JIRA", e)
+            return False
+
+        return True
+            
 
     def createTicket(self, jiraSummary):
-        """
-        Create a JIRA issue of type task
-        @input -- summary to use for jira issue
-        @output -- JIRA issue id
-        """
-        cmdList = ["--action", "createIssue", 
-                "--project", "CDE", 
-                "--type", "task",
-                "--labels", "HelpTicket",
-                "--assignee", self.assignee,
-                "--summary", jiraSummary] 
-        res = self._runJIRACmd(cmdList)
-        if not res: # something bad happened
-            return None
+        self._createConnection()
 
-        # isolate the jira issue id
-        # XXX - jira cli returns different lists depending on whether
-        # or not things are invoked with the --debug flag. ack. 
-        id = ""
-        if self.verbose:
-            print "+++++++++++++++"
-            print "Raw dump of ticket create:"
-            print res
-            print "+++++++++++++++"
+        fields = {"project": {"key": self.jiraProj },
+                  "summary": jiraSummary,
+                  "issuetype": {"name": "Bug"}
+                 }
+        try:
+            new_id = self.serverConn.create_issue(fields)
+            self.serverConn.assign_issue(new_id, self.assignee)
+            return new_id
+        except Exception, e:
+            self.printError("Unable to create ticket", e)
 
-            id = re.sub(r'created .*', "", res[-2])
-            id = re.sub(r'Issue ', "", id)
-        else:
-            id = re.sub(r'created .*', "", res[-1])
-            id = re.sub(r'Issue ', "", id)
+        return True
+            
 
-        return id
-
-    def closeTicket(self, id):
-        """
-        For a specified JIRA issue, progress it to "Closed"
-
-        @input -- JIRA id
-        @output -- return True for success, False otherwise
-        """
-        cmdList = ["--action", "progressIssue", 
-                    "--resolution", "Done", 
-                    "--issue", id,
-                    "--step", "Close Issue"] 
-        res = self._runJIRACmd(cmdList)
-
-        if self.verbose:
-            print "+++++++++++++++"
-            print "Raw dump of ticket close:"
-            print res
-            print "+++++++++++++++"
-
-        # this is horrible, but a quick hack to address weird results 
-        # behavior from jira CLI
-        if "Successfully progressed" in res[-1] or "Successfully progressed" in res[-2]:
-            return True
-        else:
+    def closeTicket(self,id):
+        # obscure, but the API wants you to know the "transitionID" for closing a bug.  According to my
+        # spelunking, it's 2.  Clear as mud.
+        try:
+            self.serverConn.transition_issue(id, transitionId=2)
+        except Exception, e:
+            self.printError("Unable to close ticket id=%s" % id, e)
             return False
+
+        return True
+
 
     def addWorkDuration(self, id):
         """
         For a specified JIRA issue, log work as specified
         by the 'duration' user argument
 
-        @input -- JIRA issue id
-        @output -- True for success, False otherwise
+        :param -- JIRA issue id
         """
-        cmdList = ["--action", "addWork", 
-                    "--timeSpent", self.duration, 
-                    "--issue", id]
-        res = self._runJIRACmd(cmdList)
+        try:
+            self.serverConn.add_worklog(issue=id,timeSpent=self.duration)
+        except Exception, e:
+            self.printError("Unable to update ticket id=%s with duration information" % id, e)
+            return False
+            
+        return True
 
-        if self.verbose:
-            print "*************"
-            print "For work duration, JIRA returned:"
-            print "--------------------------------"
-            print res
-            print "*************"
-
-            if "added for issue" in res[-2]:
-                return True
-        else:
-            if "added for issue" in res[-1]:
-                return True
-
-        return False
 
     def LogTicketAndClose(self):
         """
-        Given a username and a comment, create then immediately
+        Given a customer name and a comment, creates then immediately
         closes a help ticket in JIRA
         """
         # first create the ticket
-        jiraSummary = "%s requested help with: %s" % (self.user, self.comment)
-        id = self.createTicket(jiraSummary).strip()
+        jiraSummary = "%s requested help with: %s" % (self.customer, self.comment)
+        id = self.createTicket(jiraSummary)
+        if not id:
+            return False
+
 
         # if duration was specified, log that now
         if self.duration:
-            log = self.addWorkDuration(id)
-            if not log:
-                print "ERROR: failed to log work timeSpent '%s' to %s" % (self.duration, id)
+            if not self.addWorkDuration(id):
+                return False
 
         # now close it out
-        res = self.closeTicket(id)
-        if res:
-            print "HelpTicket %s succesfully logged!" % id
-        else:
-            print "ERROR: failed to close issue: %s" % (id)
+        if not self.closeTicket(id):
+                return False
+
+        return id
+
 
 ##############################
 def main():
@@ -199,28 +183,40 @@ def main():
     parser = optparse.OptionParser()
 
     parser.add_option("-u",
-                      metavar="<user>",
-                      dest="user",
-                      help="name of user needing assistance.")
+                      metavar="<customer>",
+                      dest="customer",
+                      help="name of user needing assistance -- REQUIRED.")
     parser.add_option("-c",
                       metavar="<comment>",
                       dest="comment",
                       help="brief description of the task, will be used as the "
-                           "bug summary")
+                           "bug summary -- REQUIRED.")
     parser.add_option("-d",
                       metavar="<duration>",
                       dest="duration",
-                      help="amount of time spent, i.e.: 2h, 3d, 1w (optional)")
-    parser.add_option("-v",
-                      metavar="<verbose>",
-                      dest="verbose",
-              action = "store_true",
-                      help="tell jira CLI to run verbosely")
+                      help="amount of time spent, i.e.: 2h, 3d, 1w -- OPTIONAL")
+    parser.add_option("-a",
+                      metavar="<serverAuth>",
+                      dest="serverAuth",
+                      help="Name of person logging ticket, to use as credentials to bug system -- REQUIRED (but can be set in template)")
+    parser.add_option("-p",
+                      metavar="<password>",
+                      dest="password",
+                      help="Password to go with -e option -- REQUIRED (but can be set in template.")
+    parser.add_option("-s",
+                      metavar="<serverURL>",
+                      dest="serverURL",
+                      help="HTTP URL to bug system -- REQUIRED (but can be set in template.")
+    parser.add_option("-x",
+                      metavar="<project>",
+                      dest="project",
+                      help="JIRA project code")
+    parser.add_option("-t",
+                      metavar="<template>",
+                      dest="template",
+                      action = "store_true",
+                      help="Run 'pony -t' to create ~/.pony.conf template file to store server info")
     options, args = parser.parse_args()
-
-    if not (options.user or options.comment):
-        parser.error("ERROR: Missing required options.  Please run "
-             "'pony -h' for usage")
 
     # keeps things clean for now, in the future we may want to expand the number
     # of tasks this script can do
@@ -228,11 +224,44 @@ def main():
         parser.error("This program does not accept the following as "
                      "arguments: %s" % str(args))
 
-    # instantiate class
-    p = Pony(options.user, options.comment, options.duration, options.verbose)
+    # if we're just dumping the template, do it now
+    if options.template:
+        res = createTemplate()
+        if not res:
+            sys.exit("Can't create template. Exiting...")
+        sys.exit("Template file created at %s" % PONY_CONF_FILE)
 
-    # log it
-    p.LogTicketAndClose()
+    if not (options.customer or options.comment):
+        parser.error("ERROR: Missing required options.  Please run "
+             "'pony -h' for usage")
+
+    userAuthArg = ""
+    passAuthArg = ""
+    serverArg = ""
+    projectArg = ""
+    if (options.serverAuth and options.password and options.serverURL and options.project):
+        userAuthArg = options.serverAuth
+        passAuthArg = options.password
+        serverArg = options.serverURL
+        projectArg = options.project
+    elif os.path.exists(PONY_CONF_FILE):
+        (userAuthArg, passAuthArg, serverArg, projectArg) = loadTemplate()
+    else:
+        parser.error("ERROR: Missing required options.  Please run "
+             "'pony -h' for usage")
+
+
+    # instantiate class
+    p = Pony(options.customer, options.comment, userAuthArg, passAuthArg, serverArg, projectArg, options.duration)
+
+    # stable it
+    ticketID = p.LogTicketAndClose()
+    if ticketID:
+        ticketURL = p.generateTicketURL(ticketID)
+        print "Successfully stabled that pony!: %s" % ticketURL
+        sys.exit(0)
+    else:
+        sys.exit("Successfully stabled that pony!: %s" % ticketURL)
 
 if __name__ == "__main__":
     main()

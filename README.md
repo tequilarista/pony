@@ -3,47 +3,53 @@ Overview
 
 "You can't have a pony (except you can)"
 
-A tool for fast logging of JIRA tasks to track support interrupts.  Opens and closes tickets in a 
-single action, adds a "HelpTicket" label for ease of querying.
-
-Usage: pony [options]
-
-Options:
-  -h, --help     show this help message and exit
-  -u <user>      name of user needing assistance.
-  -c <comment>   brief description of the task, will be used as the bug
-                 summary
-  -d <duration>  amount of time spent, i.e.: 2h, 3d, 1w (optional)
-  -v             tell jira CLI to run verbosely
-
-% pony -u joe.developer -c "debugged weird config problem breaking local build" -d 4h
-HelpTicket ABC-1234 succesfully logged!
+A tool for fast logging of JIRA tasks.
 
 Requirements
 =============
-Needs to have access to the JIRA cli tool.  It should be able to find it relative to 
-the repo's installed location, but if not, easiest alternative is to create
-a conf file:
+Need to have JIRA python module installed.  Easiest way is via pip, assuming you have it already:
 
-    ~/.pony.conf
+    % sudo pip install jira
 
-and add the following line:
+Usage
+=====
+    Usage: pony [options]
+    
+    Options:
+      -h, --help       show this help message and exit
+      -u <customer>    name of user needing assistance -- REQUIRED.
+      -c <comment>     brief description of the task, will be used as the bug
+                       summary -- REQUIRED.
+      -d <duration>    amount of time spent, i.e.: 2h, 3d, 1w -- OPTIONAL
+      -a <serverAuth>  Name of person logging ticket, to use as credentials to bug
+                       system -- REQUIRED (but can be set in template)
+      -p <password>    Password to go with -e option -- REQUIRED (but can be set
+                       in template.
+      -s <serverURL>   HTTP URL to bug system -- REQUIRED (but can be set in
+                       template.
+      -x <project>     JIRA project code
+      -t               Run 'pony -t' to create ~/.pony.conf template file to store
+                       server info
 
-    JIRA_CMD = "/path/to/jira.sh"
+Summary:
+-------
+To create easy access template, run:
 
-You can also set JIRA_CMD as an environment variable.  The jira.sh should be updated to use
-shared JIRA credentials that all pony tickets are logged as.  A future feature would be to pass 
-login information as a parameter.
+    % pony -t
+
+Edit subsequent ~/.pony.conf file -- fill in the blanks as appropriate to 
+avoid having to specify the -a, -p, -s and -x options all the time...
+
+Then you can do:
+
+    % pony -u my.customer -c "needed help with this stuff"
 
 
-Tested on OSX (Mavericks) and Linux (Centos).  
-Known to work on JIRA 6.2.5
-Known to work with jira-cli-3.6.0. Will be evaluating upgrades in the not-too-distant future.
+Note: it's currently assumed that the values of the USER environment variable is the assignee 
+of a pony task, and if that var doesn't exist, defaults to serverAuth parameter.  This is so you
+can use a unique account to log all pony bugs, but is easy to change in the class constructor if
+you want to change that behavior.
 
-Known Issues
-============
-* Susceptible to changes in JIRA versions -- the order of return values seem to move around.
-* Not super well-tested at the moment.  Let me know what you find.
 
 Authors
 -------
