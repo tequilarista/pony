@@ -18,7 +18,7 @@ import sys
 
 from jira.client import JIRA # pip install jira
 
-PONY_CONF_FILE = os.path.join(os.environ['HOME'],'.newpony.conf')
+PONY_CONF_FILE = os.path.join(os.environ['HOME'],'.pony.conf')
 if os.path.exists(PONY_CONF_FILE):
     execfile(PONY_CONF_FILE)
 
@@ -113,7 +113,8 @@ class Pony():
 
         fields = {"project": {"key": self.jiraProj },
                   "summary": jiraSummary,
-                  "issuetype": {"name": "Bug"}
+                  "issuetype": {"name": "Bug"},
+                  "labels": ['HelpTicket']
                  }
         try:
             new_id = self.serverConn.create_issue(fields)
