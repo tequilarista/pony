@@ -1,0 +1,4 @@
+*.json*
+dist/
+build/
+pony_script.egg-info/
