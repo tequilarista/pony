@@ -25,9 +25,12 @@ if os.path.exists(PONY_CONF_FILE):
 def createTemplate():
     ponyTemplate = { 'login_info': {
                                     'serverURL': "<HTTP Url for bug system>",
-                                    'project' : "<project code>",
                                     'userAuth': "<your username>",
                                     'passAuth': "<your password>",
+                                    },
+                    'project_info': {
+                                    'project' : "<project code>",
+                                    'closeID': "<PLEASE SEE: 'https://<YOUR JIRA URL>/rest/api/2/issue/<ISSUE FROM SPECIFIED PROJECT>/transitions?expand=transitions.fields' to get relevant transition ID for 'Close Issue'>",
                                     }
                     }
 
@@ -55,12 +58,13 @@ def loadTemplate():
     user = res['login_info']['userAuth']
     passwd = res['login_info']['passAuth']
     srvr = res['login_info']['serverURL']
-    proj = res['login_info']['project']
-    return (user,passwd,srvr,proj)
+    proj = res['project_info']['project']
+    transId = res['project_info']['closeID']
+    return (user,passwd,srvr,proj,transId)
 
 class Pony():
     """ Pony class -- provides helper and task functions to talk to a bug server (jira, right now"""
-    def __init__(self, customer, comment, userAuth, userPassword, server, project, duration=None):
+    def __init__(self, customer, comment, userAuth, userPassword, server, project, transitionID, duration=None):
         """ 
         :param customer -- person we are recording having helped
         :param comment -- brief description of task
@@ -68,6 +72,7 @@ class Pony():
         :param userPassword -- password for above
         :param server -- jira server URL 
         :param project -- name of jira project
+        :param transitionID -- value of a given project's 'Close Issue' resolution state
         :param duration -- optional notation of time spent, jira notation
         """
         self.serverConn = None
@@ -80,6 +85,7 @@ class Pony():
         self.jiraProj = project
         self.customer = customer
         self.comment = comment
+        self.transitionID = transitionID
         self.duration = duration
 
         if os.environ['USER']:
@@ -113,7 +119,7 @@ class Pony():
 
         fields = {"project": {"key": self.jiraProj },
                   "summary": jiraSummary,
-                  "issuetype": {"name": "Bug"},
+                  "issuetype": {"name": "Task"},
                   "labels": ['HelpTicket']
                  }
         try:
@@ -128,15 +134,14 @@ class Pony():
 
     def closeTicket(self,id):
         # obscure, but the API wants you to know the "transitionID" for closing a bug.  According to my
-        # spelunking, it's 2.  Clear as mud.
+        # spelunking, it's entirely dependent by project, so you have to check your JIRA instance. Awesome.
         try:
-            self.serverConn.transition_issue(id, transitionId=2)
+            self.serverConn.transition_issue(id, transitionId=self.transitionID)
         except Exception, e:
             self.printError("Unable to close ticket id=%s" % id, e)
             return False
 
         return True
-
 
     def addWorkDuration(self, id):
         """
@@ -246,14 +251,14 @@ def main():
         serverArg = options.serverURL
         projectArg = options.project
     elif os.path.exists(PONY_CONF_FILE):
-        (userAuthArg, passAuthArg, serverArg, projectArg) = loadTemplate()
+        (userAuthArg, passAuthArg, serverArg, projectArg, transitionID) = loadTemplate()
     else:
         parser.error("ERROR: Missing required options.  Please run "
              "'pony -h' for usage")
 
 
     # instantiate class
-    p = Pony(options.customer, options.comment, userAuthArg, passAuthArg, serverArg, projectArg, options.duration)
+    p = Pony(options.customer, options.comment, userAuthArg, passAuthArg, serverArg, projectArg, transitionID, options.duration)
 
     # stable it
     ticketID = p.LogTicketAndClose()
